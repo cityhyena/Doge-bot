@@ -1,10 +1,13 @@
-import os, json, telebot
+import os
+import json
+import telebot
 
 TOKEN = os.environ.get("TOKEN")
 ADMIN_ID = 8938541719
 CENTRAL_DOGE_ADDRESS = "D9CyxEDc8aEvrhu4HDCTfwz33vL6YtpcYX"
 
 bot = telebot.TeleBot(TOKEN)
+bot.remove_webhook()
 DB_FILE = "users.json"
 
 def load_db():
@@ -34,14 +37,14 @@ def start(m):
 @bot.message_handler(commands=['deposit'])
 def deposit(m):
     get_user(m.from_user.id)
-    text = f"DEPOSIT DOGE\n\nSend DOGE to:\n{CENTRAL_DOGE_ADDRESS}\n\nAfter sending wait 1 min then contact admin.\nMin 5 DOGE"
+    text = f"DEPOSIT DOGE\n\nSend DOGE to this address:\n{CENTRAL_DOGE_ADDRESS}\n\nAfter sending, wait 1 min and contact admin.\nMin 5 DOGE"
     bot.send_message(m.chat.id, text)
 
 @bot.message_handler(commands=['balance'])
 def balance(m):
     u = get_user(m.from_user.id)
     bal = u.get('balance', 0)
-    bot.send_message(m.chat.id, f"Your Balance: {bal} DOGE\n\n/deposit to add\n/withdraw to cash out")
+    bot.send_message(m.chat.id, f"Your Balance: {bal} DOGE\n\n/deposit to add more\n/withdraw to cash out")
 
 @bot.message_handler(commands=['withdraw'])
 def withdraw(m):
@@ -59,31 +62,10 @@ def withdraw(m):
     except:
         bot.reply_to(m, "Invalid amount")
         return
-    bot.send_message(m.chat.id, f"Withdrawal Requested: {amount} DOGE to {addr}\nAdmin will process.")
+    bot.send_message(m.chat.id, f"Withdrawal Requested: {amount} DOGE to {addr}\nAdmin will process within 24h")
     try:
-        bot.send_message(ADMIN_ID, f"NEW WITHDRAW\nUser: {m.from_user.id} @{m.from_user.username}\nAmount: {amount}\nAddr: {addr}")
+        bot.send_message(ADMIN_ID, f"NEW WITHDRAW\nUser: {m.from_user.id} @{m.from_user.username}\nAmount: {amount}\nAddr: {addr}\nBalance: {u.get('balance',0)}")
     except:
         pass
 
-@bot.message_handler(commands=['addbalance'])
-def addbalance(m):
-    if m.from_user.id!= ADMIN_ID:
-        return
-    try:
-        _, uid, amt = m.text.split()
-        db = load_db()
-        uid = str(uid)
-        if uid not in db:
-            db[uid] = {"balance": 0.0}
-        db[uid]["balance"] = float(db[uid].get("balance", 0)) + float(amt)
-        save_db(db)
-        bot.reply_to(m, f"Added {amt} to {uid}. New: {db[uid]['balance']}")
-        try:
-            bot.send_message(int(uid), f"Deposit Confirmed! +{amt} DOGE. New Balance: {db[uid]['balance']} DOGE")
-        except:
-            pass
-    except Exception as e:
-        bot.reply_to(m, f"Use: /addbalance USERID AMOUNT Error: {e}")
-
-print("DOGE BOT STARTED...")
-bot.infinity_polling()
+@bot.message_handler(commands
