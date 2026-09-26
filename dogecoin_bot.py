@@ -62,5 +62,8 @@ def withdraw(m):
     bot.send_message(m.chat.id, f"✅ *Withdrawal Requested*\n\nAmount: {amount} DOGE\nTo: `{addr}`\n\n⏳ Admin will process within 24h", parse_mode="Markdown")
 
     # Notify admin
-    try:
-        bot.send_message(ADMIN_ID, f"🔔 *NEW WITHDRAWAL*\n\nUser: {m.from_user.id} @{m.from_user.username}
+        try:
+        msg = f"NEW WITHDRAWAL\nUser: {m.from_user.id} @{m.from_user.username}\nAmount: {amount} DOGE\nAddr: {addr}\nBal: {u.get('balance',0)}"
+        bot.send_message(ADMIN_ID, msg)
+    except:
+        pass
