@@ -1,69 +1,33 @@
-import os
-import json
-import telebot
-
+import os, json, telebot
 TOKEN = os.environ.get("TOKEN")
-ADMIN_ID = 8938541719
+ADMIN = 8938541719
 ADDR = "D9CyxEDc8aEvrhu4HDCTfwz33vL6YtpcYX"
-
 bot = telebot.TeleBot(TOKEN)
 bot.remove_webhook()
 
 def load():
     try:
-        with open("users.json","r") as f:
-            return json.load(f)
-    except:
-        return {}
+        with open("users.json","r") as f: return json.load(f)
+    except: return {}
+def save(d):
+    with open("users.json","w") as f: json.dump(f,d)
 
-def save(db):
-    with open("users.json","w") as f:
-        json.dump(f,db)
+@bot.message_handler(commands=['start'])
+def s(m):
+    bot.send_message(m.chat.id, f"BOT LIVE!\n\n/deposit - Get deposit address\n/balance - Check balance\n/withdraw - Withdraw")
 
-@bot.message_handler(commands=["start"])
-def start(m):
-    bot.send_message(m.chat.id,"BOT LIVE\n/deposit\n/balance\n/withdraw")
+@bot.message_handler(commands=['deposit'])
+def dep(m):
+    bot.send_message(m.chat.id, f"DEPOSIT DOGE\n\nAddress:\n{ADDR}\n\nMin: 5 DOGE\nAfter you send, contact admin.")
 
-@bot.message_handler(commands=["deposit"])
-def deposit(m):
+@bot.message_handler(commands=['balance'])
+def bal(m):
     db=load()
-    uid=str(m.from_user.id)
-    if uid not in db:
-        db[uid]={"bal":0}
-        save(db)
-    bot.send_message(m.chat.id,f"Send DOGE to:\n{ADDR}\nMin 5 DOGE")
+    b=db.get(str(m.from_user.id),{}).get('bal',0)
+    bot.send_message(m.chat.id, f"Your Balance: {b} DOGE")
 
-@bot.message_handler(commands=["balance"])
-def balance(m):
-    db=load()
-    uid=str(m.from_user.id)
-    b=db.get(uid,{}).get("bal",0)
-    bot.send_message(m.chat.id,f"Balance: {b} DOGE")
-
-@bot.message_handler(commands=["withdraw"])
-def withdraw(m):
-    bot.send_message(m.chat.id,"Request received. Admin will process.")
-    try:
-        bot.send_message(ADMIN_ID,f"WITHDRAW REQ: {m.text} FROM {m.from_user.id}")
-    except:
-        pass
-
-@bot.message_handler(commands=["addbalance"])
-def add(m):
-    if m.from_user.id!=ADMIN_ID:
-        return
-    try:
-        a=m.text.split()
-        uid=a[1]
-        amt=float(a[2])
-        db=load()
-        if uid not in db:
-            db[uid]={"bal":0}
-        db[uid]["bal"]=db[uid].get("bal",0)+amt
-        save(db)
-        bot.reply_to(m,f"Added {amt} to {uid}")
-        bot.send_message(int(uid),f"Deposit confirmed +{amt} DOGE")
-    except Exception as e:
-        bot.reply_to(m,str(e))
+@bot.message_handler(commands=['withdraw','addbalance'])
+def other(m):
+    bot.send_message(m.chat.id, "Use /withdraw AMOUNT ADDRESS")
 
 bot.infinity_polling(skip_pending=True)
